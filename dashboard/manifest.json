@@ -1,0 +1,13 @@
+{
+  "name": "skills-manager",
+  "label": "Skills Manager",
+  "description": "View, edit, and manage Hermes agent skills from the dashboard",
+  "icon": "Brain",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/skills-manager",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}
