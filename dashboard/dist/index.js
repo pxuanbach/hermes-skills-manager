@@ -439,10 +439,10 @@ var tabSt = useState("files");
                 "Click a file to view its content"
               )
             : h("div", { className: "flex-1 flex flex-col" },
-                // Header row
-                h("div", { className: "flex items-center gap-2 mb-2" },
-                  h("span", { className: "text-xs font-mono text-muted-foreground flex-1 truncate" }, selectedFileSt[0]),
-                  !readOnly && h(Button, {
+// Header row
+                  h("div", { className: "flex items-center gap-2 mb-2" },
+                    h("span", { className: "text-xs font-mono text-muted-foreground flex-1 truncate" }, selectedFileSt[0]),
+                    !readOnly && h(Button, {
                     size: "xs",
                     variant: fileEditMode[0] ? "default" : "outline",
                     onClick: function () {
@@ -469,9 +469,11 @@ var tabSt = useState("files");
                         console.log("[SkillsManager] Calling apiReadFile...");
                         apiReadFile(name, path)
                           .then(function (data) {
-                            console.log("[SkillsManager] READY, data:", data);
+                            console.log("[SkillsManager] READY, data content length:", data.content ? data.content.length : 0);
                             setFileContent(data.content || "");
+                            console.log("[SkillsManager] BEFORE setFileEditMode(true), fileEditModeSt[0]=", fileEditModeSt[0]);
                             setFileEditMode(true);
+                            console.log("[SkillsManager] AFTER setFileEditMode(true), fileEditMode[0]=", fileEditMode[0]);
                             setFileSaving(false);
                           })
                           .catch(function (e) {
