@@ -444,9 +444,9 @@ var tabSt = useState("files");
                     h("span", { className: "text-xs font-mono text-muted-foreground flex-1 truncate" }, selectedFileSt[0]),
                     !readOnly && h(Button, {
                     size: "xs",
-                    variant: fileEditMode[0] ? "default" : "outline",
+                    variant: fileEditMode ? "default" : "outline",
                     onClick: function () {
-                      if (fileEditMode[0]) {
+                      if (fileEditMode) {
                         // Save — write file to disk
                         setFileSaving(true);
                         setFileMsg(null);
@@ -484,7 +484,7 @@ var tabSt = useState("files");
                       }
                     },
                     disabled: fileSaving,
-                  }, fileEditMode[0] ? (fileSaving ? "Saving…" : "Save") : (fileSaving ? "Loading…" : "Edit")),
+                  }, fileEditMode ? (fileSaving ? "Saving…" : "Save") : (fileSaving ? "Loading…" : "Edit")),
                 ),
 
                 // Feedback message
@@ -497,13 +497,13 @@ var tabSt = useState("files");
                 ),
 
                 // Read-only preview (when not editing)
-                !fileEditMode[0] && h("pre", {
+                !fileEditMode && h("pre", {
                   className: "flex-1 text-xs bg-muted/50 rounded p-4 overflow-auto whitespace-pre-wrap font-mono",
                   style: { fontFamily: "inherit", minHeight: "300px" },
                 }, fileContentSt[0] || "(empty)"),
 
                 // Editable textarea (when in edit mode)
-                fileEditMode[0] && h("textarea", {
+                fileEditMode && h("textarea", {
                   className: "flex-1 w-full bg-transparent border border-input rounded p-3 text-xs font-mono resize-y",
                   value: fileContentSt[0],
                   onChange: function (e) { setFileContent(e.target.value); },
