@@ -466,13 +466,16 @@ var tabSt = useState("files");
                         console.log("[SkillsManager] Edit clicked, path=", path, "name=", name);
                         setFileSaving(true);
                         setFileMsg(null);
+                        console.log("[SkillsManager] Calling apiReadFile...");
                         apiReadFile(name, path)
                           .then(function (data) {
+                            console.log("[SkillsManager] READY, data:", data);
                             setFileContent(data.content || "");
                             setFileEditMode(true);
                             setFileSaving(false);
                           })
                           .catch(function (e) {
+                            console.log("[SkillsManager] READ ERROR:", e);
                             setFileMsg({ ok: false, msg: String(e) + " — check console (F12)" });
                             setFileSaving(false);
                           });
