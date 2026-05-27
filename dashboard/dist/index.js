@@ -460,6 +460,7 @@ var tabSt = useState("files");
                         // Enter edit mode — load file content first
                         var path = selectedFileSt[0];
                         setFileSaving(true);
+                        setFileMsg(null);
                         apiReadFile(name, path)
                           .then(function (data) {
                             setFileContent(data.content || "");
@@ -467,13 +468,13 @@ var tabSt = useState("files");
                             setFileSaving(false);
                           })
                           .catch(function (e) {
-                            setFileMsg({ ok: false, msg: String(e) });
+                            setFileMsg({ ok: false, msg: String(e) + " — check console (F12)" });
                             setFileSaving(false);
                           });
                       }
                     },
                     disabled: fileSaving,
-                  }, fileEditMode[0] ? (fileSaving ? "Saving…" : "Save") : "Edit"),
+                  }, fileEditMode[0] ? (fileSaving ? "Saving…" : "Save") : (fileSaving ? "Loading…" : "Edit")),
                 ),
 
                 // Feedback message
