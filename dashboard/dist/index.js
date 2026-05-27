@@ -69,11 +69,15 @@
   }
 
   function apiReadFile(name, path) {
-    return SDK.fetchJSON(API + "/skills/" + encodeURIComponent(name) + "/files/" + path);
+    var url = API + "/skills/" + encodeURIComponent(name) + "/files/" + path;
+    console.log("[SkillsManager] READ " + url);
+    return SDK.fetchJSON(url);
   }
 
   function apiWriteFile(name, path, content) {
-    return SDK.fetchJSON(API + "/skills/" + encodeURIComponent(name) + "/files/" + path, {
+    var url = API + "/skills/" + encodeURIComponent(name) + "/files/" + path;
+    console.log("[SkillsManager] WRITE " + url, { contentLength: content.length });
+    return SDK.fetchJSON(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: content }),
@@ -459,6 +463,7 @@ var tabSt = useState("files");
                       } else {
                         // Enter edit mode — load file content first
                         var path = selectedFileSt[0];
+                        console.log("[SkillsManager] Edit clicked, path=", path, "name=", name);
                         setFileSaving(true);
                         setFileMsg(null);
                         apiReadFile(name, path)
