@@ -280,7 +280,7 @@ var tabSt = useState("files");
       setLoading(true);
       setEditMode(false);
       setSaveMsg(null);
-      setFileEditMode(false);
+      // setFileEditMode(false); // Removed — don't reset edit mode when skill data refreshes
       setSelectedFile(null);
       apiGetSkill(name)
         .then(function (s) { setSkill(s); setEditContent(s.content || ""); setLoading(false); })
@@ -471,9 +471,9 @@ var tabSt = useState("files");
                           .then(function (data) {
                             console.log("[SkillsManager] READY, data content length:", data.content ? data.content.length : 0);
                             setFileContent(data.content || "");
-                            console.log("[SkillsManager] BEFORE setFileEditMode(true), fileEditModeSt[0]=", fileEditModeSt[0]);
+                            console.log("[SkillsManager] Calling setFileEditMode(true)...");
                             setFileEditMode(true);
-                            console.log("[SkillsManager] AFTER setFileEditMode(true), fileEditMode[0]=", fileEditMode[0]);
+                            console.log("[SkillsManager] setFileEditMode(true) called");
                             setFileSaving(false);
                           })
                           .catch(function (e) {
