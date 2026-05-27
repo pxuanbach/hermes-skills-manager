@@ -451,6 +451,18 @@ var tabSt = useState("files");
                     setFileEditMode(false);
                     setFileMsg(null);
                     setFileContent("");
+                    // Auto-load file content for preview
+                    var path = f.path;
+                    setFileSaving(true);
+                    apiReadFile(name, path)
+                      .then(function (data) {
+                        setFileContent(data.content || "");
+                        setFileSaving(false);
+                      })
+                      .catch(function (e) {
+                        setFileMsg({ ok: false, msg: String(e) });
+                        setFileSaving(false);
+                      });
                   },
                   title: f.path,
                 }, f.path);
