@@ -327,9 +327,9 @@ var tabSt = useState("files");
       h("div", { className: "flex gap-1 border-b pb-0" },
         h(Button, {
           size: "sm",
-          variant: tab === "content" ? "default" : "ghost",
-          onClick: function () { setTab("content"); }
-        }, "Content"),
+          variant: tab === "files" ? "default" : "ghost",
+          onClick: function () { setTab("files"); }
+        }, "Files"),
         h(Button, {
           size: "sm",
           variant: tab === "patch" ? "default" : "ghost",
@@ -337,55 +337,12 @@ var tabSt = useState("files");
         }, "Patch"),
         h(Button, {
           size: "sm",
-          variant: tab === "files" ? "default" : "ghost",
-          onClick: function () { setTab("files"); }
-        }, "Files"),
-        h(Button, {
-          size: "sm",
           variant: tab === "info" ? "default" : "ghost",
           onClick: function () { setTab("info"); }
         }, "Info"),
       ),
 
-      // Content tab
-      tab === "content" && h("div", { className: "pt-4" },
-        !readOnly && h(Button, {
-          size: "sm",
-          className: "mb-3",
-          onClick: function () {
-            if (editMode[0]) {
-              setSaving(true);
-              setSaveMsg(null);
-              apiMutate(name, "edit", { content: editContentSt[0] })
-                .then(function () {
-                  setSaveMsg({ ok: true, msg: "Skill updated." });
-                  setEditMode(false);
-                  setSaving(false);
-                  return apiGetSkill(name);
-                })
-                .then(function (s) { setSkill(s); })
-                .catch(function (e) { setSaveMsg({ ok: false, msg: String(e) }); setSaving(false); });
-            } else {
-              setEditMode(true);
-            }
-          },
-          disabled: saving,
-        }, editMode[0] ? (saving ? "Saving…" : "Save") : "Edit content"),
-        readOnly && h("p", { className: "text-xs text-muted-foreground mb-3" }, "Read-only (bundled skill)"),
-        editMode[0]
-          ? h("textarea", {
-              className: "w-full bg-transparent border border-input rounded p-2 text-xs font-mono min-h-[60vh] resize-y",
-              value: editContentSt[0],
-              onChange: function (e) { setEditContent(e.target.value); },
-              style: { fontFamily: "inherit" },
-            })
-          : h("pre", {
-              className: "text-xs bg-muted/50 rounded p-4 overflow-auto max-h-[60vh] whitespace-pre-wrap font-mono",
-              style: { fontFamily: "inherit" },
-            }, skill.content || ""),
-      ),
-
-      // Patch tab
+      // Files tab
       tab === "patch" && h("div", { className: "pt-4" },
         readOnly
           ? h("p", { className: "text-xs text-muted-foreground" }, "Read-only skill.")
