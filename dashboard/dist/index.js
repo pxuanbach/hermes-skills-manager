@@ -1,8 +1,13 @@
 /**
  * Hermes Skills Manager — Dashboard Plugin
  *
+ * View, edit, and manage Hermes agent skills from the dashboard.
+ * Supports viewing SKILL.md content, patching skill content,
+ * and managing skill files (references/, templates/, etc.).
+ *
  * Plain IIFE, no build step. Uses window.__HERMES_PLUGIN_SDK__ for React +
- * shadcn primitives.
+ * shadcn primitives. Bundle is pre-built and the plugin_api.py backend
+ * handles all skill mutations via skill_manage().
  */
 
 (function () {
@@ -15,6 +20,8 @@
   var components = SDK.components;
   var Card = components.Card;
   var CardContent = components.CardContent;
+  var CardHeader = components.CardHeader;
+  var CardTitle = components.CardTitle;
   var Badge = components.Badge;
   var Button = components.Button;
   var Input = components.Input;
@@ -22,10 +29,15 @@
   var Select = components.Select;
   var SelectOption = components.SelectOption;
   var Separator = components.Separator;
+  var Tabs = null; // removed
+  var TabsList = null;
+  var TabsTrigger = null;
   var hooks = SDK.hooks;
   var useState = hooks.useState;
   var useEffect = hooks.useEffect;
+  var useCallback = hooks.useCallback;
   var useMemo = hooks.useMemo;
+  var useRef = hooks.useRef;
   var utils = SDK.utils;
   var cn = utils.cn;
   var timeAgo = utils.timeAgo;
@@ -39,23 +51,29 @@
   }
 
   function apiGetSkill(name) {
-    return SDK.fetchJSON(API + "/skills/" + name);
+    return SDK.fetchJSON(API + "/skills/" + encodeURIComponent(name));
   }
 
   function apiMutate(name, action, body) {
-    return SDK.fetchJSON(API + "/skills/" + name, {
+    var payload = { action: action };
+    if (body.old_string !== undefined) payload.old_string = body.old_string;
+    if (body.new_string !== undefined) payload.new_string = body.new_string;
+    if (body.content !== undefined) payload.content = body.content;
+    if (body.replace_all !== undefined) payload.replace_all = body.replace_all;
+    if (body.absorbed_into !== undefined) payload.absorbed_into = body.absorbed_into;
+    return SDK.fetchJSON(API + "/skills/" + encodeURIComponent(name), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(Object.assign({ action: action }, body)),
+      body: JSON.stringify(payload),
     });
   }
 
   function apiReadFile(name, path) {
-    return SDK.fetchJSON(API + "/skills/" + name + "/files/" + path);
+    return SDK.fetchJSON(API + "/skills/" + encodeURIComponent(name) + "/files/" + path);
   }
 
   function apiWriteFile(name, path, content) {
-    return SDK.fetchJSON(API + "/skills/" + name + "/files/" + path, {
+    return SDK.fetchJSON(API + "/skills/" + encodeURIComponent(name) + "/files/" + path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: content }),
@@ -63,23 +81,26 @@
   }
 
   function apiDeleteFile(name, path) {
-    return SDK.fetchJSON(API + "/skills/" + name + "/files/" + path, {
+    return SDK.fetchJSON(API + "/skills/" + encodeURIComponent(name) + "/files/" + path, {
       method: "DELETE",
     });
   }
 
   function apiUsage(name) {
-    return SDK.fetchJSON(API + "/skills/" + name + "/usage").catch(function () { return null; });
+    return SDK.fetchJSON(API + "/skills/" + encodeURIComponent(name) + "/usage");
   }
 
-  // ── Source badge ─────────────────────────────────────────────────────────
+  // ── Utility ───────────────────────────────────────────────────────────────
 
   function sourceBadge(source) {
-    var variant = "secondary";
-    var label = source || "unknown";
-    if (source === "user") { variant = "default"; label = "User"; }
-    else if (source === "bundled") { variant = "outline"; label = "Bundled"; }
-    return h(Badge, { variant: variant, className: "text-xs" }, label);
+    var s;
+    var map = {
+      user: { label: "user", cls: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" },
+      bundled: { label: "bundled", cls: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
+      external: { label: "external", cls: "bg-amber-500/20 text-amber-400 border-amber-500/30" },
+    };
+    s = map[source] || map.external;
+    return h(Badge, { className: s.cls }, s.label);
   }
 
   function CategoryBadge(props) {
@@ -122,7 +143,7 @@
       return list;
     }, [skills[0], filter[0], sourceFilter[0]]);
 
-    if (loading[0]) return h("div", { className: "p-6 text-center text-muted-foreground" }, "Loading skills...");
+    if (loading[0]) return h("div", { className: "p-6 text-center text-muted-foreground" }, "Loading skills…");
     if (error[0]) return h("div", { className: "p-6 text-center text-destructive" }, "Error: " + error[0]);
 
     var cats = [];
@@ -138,7 +159,7 @@
     return h("div", { className: "flex flex-col gap-4" },
       h("div", { className: "flex items-center gap-3 flex-wrap" },
         h(Input, {
-          placeholder: "Search skills...",
+          placeholder: "Search skills…",
           value: filter[0],
           onChange: function (e) { setFilter(e.target.value); },
           className: "max-w-xs",
@@ -156,7 +177,7 @@
           ),
         ),
         h("span", { className: "text-xs text-muted-foreground ml-auto" },
-          String(filtered.length) + " / " + String(skills[0].length) + " skills"
+          filtered.length + " / " + skills[0].length + " skills"
         ),
       ),
 
@@ -187,6 +208,11 @@
                   h(CategoryBadge, { cat: s.category }),
                 ),
                 s.description && h("p", { className: "text-xs text-muted-foreground line-clamp-2" }, s.description),
+                s.tags && s.tags.length > 0 && h("div", { className: "flex gap-1 mt-1 flex-wrap" },
+                  s.tags.slice(0, 6).map(function (t) {
+                    return h(Badge, { key: t, variant: "secondary", className: "text-xs py-0 px-1.5" }, t);
+                  }),
+                ),
               ),
             ),
           );
@@ -209,8 +235,27 @@
     var errorSt = useState(null);
     var setError = errorSt[1];
     var error = errorSt[0];
-
-    // Files tab state
+var tabSt = useState("files");
+    var setTab = tabSt[1];
+    var tab = tabSt[0];
+    var editModeSt = useState(false);
+    var setEditMode = editModeSt[1];
+    var editMode = editModeSt[0];
+    var editContentSt = useState("");
+    var setEditContent = editContentSt[1];
+    var editContent = editContentSt[0];
+    var patchOldSt = useState("");
+    var setPatchOld = patchOldSt[1];
+    var patchOld = patchOldSt[0];
+    var patchNewSt = useState("");
+    var setPatchNew = patchNewSt[1];
+    var patchNew = patchNewSt[0];
+    var savingSt = useState(false);
+    var setSaving = savingSt[1];
+    var saving = savingSt[0];
+    var saveMsgSt = useState(null);
+    var setSaveMsg = saveMsgSt[1];
+    var saveMsg = saveMsgSt[0];
     var selectedFileSt = useState(null);
     var setSelectedFile = selectedFileSt[1];
     var selectedFile = selectedFileSt[0];
@@ -220,348 +265,31 @@
     var fileEditModeSt = useState(false);
     var setFileEditMode = fileEditModeSt[1];
     var fileEditMode = fileEditModeSt[0];
-    var fileLoadingSt = useState(false);
-    var setFileLoading = fileLoadingSt[1];
-    var fileLoading = fileLoadingSt[0];
-    var fileErrorSt = useState(null);
-    var setFileError = fileErrorSt[1];
-    var fileError = fileErrorSt[0];
-    var savingFileSt = useState(false);
-    var setSavingFile = savingFileSt[1];
-    var savingFile = savingFileSt[0];
+    var fileSavingSt = useState(false);
+    var setFileSaving = fileSavingSt[1];
+    var fileSaving = fileSavingSt[0];
     var fileMsgSt = useState(null);
     var setFileMsg = fileMsgSt[1];
     var fileMsg = fileMsgSt[0];
 
-    // Content/Patch/Info tabs (simplified)
-    var editModeSt = useState(false);
-    var setEditMode = editModeSt[1];
-    var editMode = editModeSt[0];
-    var editContentSt = useState("");
-    var patchOldSt = useState("");
-    var patchNewSt = useState("");
-    var savingSt = useState(false);
-    var setSaving = savingSt[1];
-    var saving = savingSt[0];
-    var saveMsgSt = useState(null);
-    var setSaveMsg = saveMsgSt[1];
-    var saveMsg = saveMsgSt[0];
-    var tabSt = useState("files");
-    var setTab = tabSt[1];
-    var tab = tabSt[0];
-    var usageSt = useState(null);
-    var setUsage = usageSt[1];
-    var usage = usageSt[0];
-
     useEffect(function () {
       setLoading(true);
       setEditMode(false);
-      saveMsgSt[1](null);
-      setTab("files");
-      setSelectedFile(null);
-      setFileContent("");
+      setSaveMsg(null);
       setFileEditMode(false);
-      Promise.all([apiGetSkill(name), apiUsage(name)])
-        .then(function (results) {
-          var s = results[0];
-          var u = results[1];
-          setSkill(s);
-          setEditContent(s.content || "");
-          setUsage(u);
-          setLoading(false);
-        })
+      setSelectedFile(null);
+      apiGetSkill(name)
+        .then(function (s) { setSkill(s); setEditContent(s.content || ""); setLoading(false); })
         .catch(function (e) { setError(String(e)); setLoading(false); });
     }, [name]);
 
-    if (loading) return h("div", { className: "p-6 text-center text-muted-foreground" }, "Loading skill " + name + "...");
+    if (loading) return h("div", { className: "p-6 text-center text-muted-foreground" }, "Loading skill " + name + "…");
     if (error) return h("div", { className: "p-6 text-center text-destructive" }, "Error: " + error);
     if (!skill) return null;
 
     var readOnly = skill.source !== "user";
 
-    // ── Load file content when file is selected ───────────────────────────
-
-    function loadFile(path) {
-      if (!path || fileLoadingSt[0]) return;
-      setSelectedFile(path);
-      setFileEditMode(false);
-      setFileContent("");
-      setFileError(null);
-      setFileMsg(null);
-      setFileLoading(true);
-      apiReadFile(name, path)
-        .then(function (data) {
-          setFileContent(data.content || "");
-          setFileLoading(false);
-        })
-        .catch(function (e) {
-          setFileError(String(e));
-          setFileLoading(false);
-        });
-    }
-
-    // ── Tab button helper ───────────────────────────────────────────────
-
-    function TabBtn(tabId, label) {
-      return h(Button, {
-        key: tabId,
-        variant: tab === tabId ? "default" : "ghost",
-        size: "sm",
-        onClick: function () { setTab(tabId); },
-      }, label);
-    }
-
-    // ── Files tab panel (2-column) ─────────────────────────────────────
-
-    var filesPanel;
-
-    if (!skill.files || skill.files.length === 0) {
-      filesPanel = h("p", { className: "text-xs text-muted-foreground pt-4" }, "No files in this skill.");
-    } else {
-      filesPanel = h("div", { className: "flex gap-4", style: { minHeight: "420px" } },
-
-        // Column 1: file list
-        h("div", { className: "w-52 shrink-0" },
-          h("div", { className: "bg-muted/30 rounded p-3" },
-            h("ul", { className: "text-xs space-y-0.5" },
-              skill.files.map(function (f) {
-                var active = selectedFileSt[0] === f.path;
-                return h("li", {
-                  key: f.path,
-                  className: cn(
-                    "cursor-pointer px-2 py-1.5 rounded truncate transition-colors",
-                    active ? "bg-primary/20 text-primary font-medium" : "hover:bg-muted"
-                  ),
-                  onClick: function () { loadFile(f.path); },
-                  title: f.path,
-                }, f.path);
-              }),
-            ),
-          ),
-        ),
-
-        // Column 2: file content viewer/editor
-        h("div", { className: "flex-1 min-w-0 flex flex-col" },
-
-          // Empty state
-          !selectedFileSt[0] && h("div", {
-            className: "flex-1 flex items-center justify-center text-muted-foreground text-sm"
-          }, "Select a file to view its content"),
-
-          // Loading state
-          selectedFileSt[0] && fileLoadingSt[0] && h("div", {
-            className: "flex-1 flex items-center justify-center text-muted-foreground text-sm"
-          }, "Loading..."),
-
-          // File loaded
-          selectedFileSt[0] && !fileLoadingSt[0] && h("div", { className: "flex flex-col h-full" },
-
-            // Toolbar
-            h("div", { className: "flex items-center gap-2 mb-2" },
-              h("span", { className: "text-xs font-mono text-muted-foreground flex-1 truncate" },
-                selectedFileSt[0]
-              ),
-              !readOnly && h(Button, {
-                size: "xs",
-                variant: fileEditModeSt[0] ? "default" : "outline",
-                onClick: function () {
-                  if (fileEditModeSt[0]) {
-                    setSavingFile(true);
-                    fileMsgSt[1](null);
-                    apiWriteFile(name, selectedFileSt[0], fileContentSt[0])
-                      .then(function () {
-                        fileMsgSt[1]({ ok: true, msg: "Saved." });
-                        setFileEditMode(false);
-                        setSavingFile(false);
-                      })
-                      .catch(function (e) {
-                        fileMsgSt[1]({ ok: false, msg: String(e) });
-                        setSavingFile(false);
-                      });
-                  } else {
-                    setFileEditMode(true);
-                  }
-                },
-                disabled: savingFileSt[0],
-              }, fileEditModeSt[0] ? (savingFileSt[0] ? "Saving..." : "Save") : "Edit"),
-              selectedFileSt[0] !== "SKILL.md" && !readOnly && h(Button, {
-                size: "xs",
-                variant: "outline",
-                onClick: function () {
-                  if (!window.confirm("Delete '" + selectedFileSt[0] + "'?")) return;
-                  setSavingFile(true);
-                  apiDeleteFile(name, selectedFileSt[0])
-                    .then(function () {
-                      setSelectedFile(null);
-                      setFileContent("");
-                      setFileEditMode(false);
-                      return apiGetSkill(name);
-                    })
-                    .then(function (s) { setSkill(s); setSavingFile(false); })
-                    .catch(function (e) {
-                      fileMsgSt[1]({ ok: false, msg: String(e) });
-                      setSavingFile(false);
-                    });
-                },
-                disabled: savingFileSt[0],
-              }, "Delete"),
-            ),
-
-            // Message
-            fileMsgSt[0] && h("div", {
-              className: "text-xs px-2 py-1 rounded mb-2 " + (fileMsgSt[0].ok
-                ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400"
-                : "bg-destructive/10 border border-destructive/30 text-destructive"
-              )},
-              fileMsgSt[0].msg,
-            ),
-
-            // Content
-            fileEditModeSt[0]
-              ? h("textarea", {
-                  className: "flex-1 w-full bg-transparent border border-input rounded p-3 text-xs font-mono resize-y",
-                  value: fileContentSt[0],
-                  onChange: function (e) { setFileContent(e.target.value); },
-                  style: { fontFamily: "inherit", minHeight: "320px" },
-                })
-              : h("pre", {
-                  className: "flex-1 text-xs bg-muted/50 rounded p-4 overflow-auto whitespace-pre-wrap font-mono",
-                  style: { fontFamily: "inherit", minHeight: "320px" },
-                }, fileContentSt[0] || "(empty)"),
-          ),
-        ),
-      );
-    }
-
-    // ── Content tab panel (read-only preview + edit mode for SKILL.md) ────
-
-    var contentPanel = h("div", { className: "pt-4" },
-      !readOnly && h(Button, {
-        size: "sm",
-        className: "mb-3",
-        onClick: function () {
-          if (editModeSt[0]) {
-            setSaving(true);
-            saveMsgSt[1](null);
-            apiMutate(name, "edit", { content: editContentSt[0] })
-              .then(function () {
-                saveMsgSt[1]({ ok: true, msg: "Skill content saved." });
-                setEditMode(false);
-                setSaving(false);
-                return apiGetSkill(name);
-              })
-              .then(function (s) { setSkill(s); })
-              .catch(function (e) {
-                saveMsgSt[1]({ ok: false, msg: String(e) });
-                setSaving(false);
-              });
-          } else {
-            setEditMode(true);
-          }
-        },
-        disabled: savingSt[0],
-      }, editModeSt[0] ? (savingSt[0] ? "Saving..." : "Save") : "Edit SKILL.md"),
-      readOnly && h("p", { className: "text-xs text-muted-foreground mb-3" }, "Read-only (bundled skill)"),
-      h("pre", {
-        className: "text-xs bg-muted/50 rounded p-4 overflow-auto max-h-[60vh] whitespace-pre-wrap font-mono",
-        style: { fontFamily: "inherit" },
-      }, skill.content || ""),
-    );
-
-    // ── Patch tab (old_string / new_string) ─────────────────────────────
-
-    var patchPanel = h("div", { className: "pt-4" },
-      readOnly
-        ? h("p", { className: "text-xs text-muted-foreground" }, "Read-only skill.")
-        : h("div", { className: "flex flex-col gap-3" },
-            h("div", null,
-              h(Label, { className: "text-xs mb-1 block" }, "Find this text:"),
-              h("textarea", {
-                className: "w-full bg-muted border border-input rounded p-2 text-xs font-mono min-h-[80px] resize-y",
-                value: patchOldSt[0],
-                onChange: function (e) { patchOldSt[1](e.target.value); },
-                placeholder: "Exact text to find...",
-                style: { fontFamily: "inherit" },
-              }),
-            ),
-            h("div", null,
-              h(Label, { className: "text-xs mb-1 block" }, "Replace with:"),
-              h("textarea", {
-                className: "w-full bg-muted border border-input rounded p-2 text-xs font-mono min-h-[80px] resize-y",
-                value: patchNewSt[0],
-                onChange: function (e) { patchNewSt[1](e.target.value); },
-                placeholder: "Replacement text (leave empty to delete)",
-                style: { fontFamily: "inherit" },
-              }),
-            ),
-            h(Button, {
-              size: "sm",
-              onClick: function () {
-                if (!patchOldSt[0]) return;
-                setSaving(true);
-                saveMsgSt[1](null);
-                apiMutate(name, "patch", { old_string: patchOldSt[0], new_string: patchNewSt[0] })
-                  .then(function () {
-                    saveMsgSt[1]({ ok: true, msg: "Patch applied." });
-                    patchOldSt[1]("");
-                    patchNewSt[1]("");
-                    return apiGetSkill(name);
-                  })
-                  .then(function (s) { setSkill(s); setSaving(false); })
-                  .catch(function (e) {
-                    saveMsgSt[1]({ ok: false, msg: String(e) });
-                    setSaving(false);
-                  });
-              },
-              disabled: savingSt[0] || !patchOldSt[0],
-            }, savingSt[0] ? "Patching..." : "Apply patch"),
-        ),
-    );
-
-    // ── Info tab ─────────────────────────────────────────────────────────
-
-    var infoPanel = h("div", { className: "pt-4" },
-      h("dl", { className: "grid grid-cols-2 gap-4 text-xs" },
-        h("div", null,
-          h("dt", { className: "text-muted-foreground mb-1" }, "Name"),
-          h("dd", { className: "font-medium" }, skill.name)
-        ),
-        h("div", null,
-          h("dt", { className: "text-muted-foreground mb-1" }, "Category"),
-          h("dd", { className: "font-medium" }, skill.category || "-")
-        ),
-        h("div", null,
-          h("dt", { className: "text-muted-foreground mb-1" }, "Source"),
-          h("dd", null, sourceBadge(skill.source))
-        ),
-        skills[0] && h("div", null,
-          h("dt", { className: "text-muted-foreground mb-1" }, "Tags"),
-          h("dd", null, (skill.tags || []).join(", ") || "-")
-        ),
-        h("div", null,
-          h("dt", { className: "text-muted-foreground mb-1" }, "Skill path"),
-          h("dd", { className: "font-mono text-muted-foreground break-all" }, skill.skill_dir || "-")
-        ),
-        usage && h("div", null,
-          h("dt", { className: "text-muted-foreground mb-1" }, "Used"),
-          h("dd", null, String(usage.use_count || 0) + " times")
-        ),
-        usage && usage.last_activity_at && h("div", null,
-          h("dt", { className: "text-muted-foreground mb-1" }, "Last activity"),
-          h("dd", null, timeAgo(new Date(usage.last_activity_at).getTime() / 1000))
-        ),
-      ),
-    );
-
-    var currentTabContent;
-    if (tab === "files") currentTabContent = filesPanel;
-    else if (tab === "content") currentTabContent = contentPanel;
-    else if (tab === "patch") currentTabContent = patchPanel;
-    else currentTabContent = infoPanel;
-
     return h("div", { className: "flex flex-col gap-4" },
-
-      // Header row
       h("div", { className: "flex items-center gap-3" },
         h(Button, { variant: "ghost", size: "sm", onClick: onBack },
           h("svg", { xmlns: "http://www.w3.org/2000/svg", width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2 },
@@ -582,30 +310,239 @@
           size: "sm",
           onClick: function () {
             if (!window.confirm("Delete skill '" + name + "'? This cannot be undone.")) return;
-            apiMutate(name, "delete", {}).then(function () { onBack(); });
+            apiMutate(name, "remove", {}).then(onBack).catch(function (e) { setError(String(e)); });
           },
         }, "Delete skill"),
       ),
 
-      // Feedback message
-      saveMsgSt[0] && h("div", {
-        className: "text-sm px-3 py-2 rounded border " + (saveMsgSt[0].ok
+      saveMsg && h("div", {
+        className: "text-sm px-3 py-2 rounded border " + (saveMsg.ok
           ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
           : "bg-destructive/10 border-destructive/30 text-destructive"
         )},
-        saveMsgSt[0].msg,
+        saveMsg.msg,
       ),
 
-      // Tab buttons
-      h("div", { className: "flex gap-1 border-b" },
-        TabBtn("files", "Files"),
-        TabBtn("content", "Content"),
-        !readOnly && TabBtn("patch", "Patch"),
-        TabBtn("info", "Info"),
+      // Tab buttons — native div+Button
+      h("div", { className: "flex gap-1 border-b pb-0" },
+        h(Button, {
+          size: "sm",
+          variant: tab === "content" ? "default" : "ghost",
+          onClick: function () { setTab("content"); }
+        }, "Content"),
+        h(Button, {
+          size: "sm",
+          variant: tab === "patch" ? "default" : "ghost",
+          onClick: function () { setTab("patch"); }
+        }, "Patch"),
+        h(Button, {
+          size: "sm",
+          variant: tab === "files" ? "default" : "ghost",
+          onClick: function () { setTab("files"); }
+        }, "Files"),
+        h(Button, {
+          size: "sm",
+          variant: tab === "info" ? "default" : "ghost",
+          onClick: function () { setTab("info"); }
+        }, "Info"),
       ),
 
-      // Tab content
-      currentTabContent,
+      // Content tab
+      tab === "content" && h("div", { className: "pt-4" },
+        !readOnly && h(Button, {
+          size: "sm",
+          className: "mb-3",
+          onClick: function () {
+            if (editMode[0]) {
+              setSaving(true);
+              setSaveMsg(null);
+              apiMutate(name, "edit", { content: editContentSt[0] })
+                .then(function () {
+                  setSaveMsg({ ok: true, msg: "Skill updated." });
+                  setEditMode(false);
+                  setSaving(false);
+                  return apiGetSkill(name);
+                })
+                .then(function (s) { setSkill(s); })
+                .catch(function (e) { setSaveMsg({ ok: false, msg: String(e) }); setSaving(false); });
+            } else {
+              setEditMode(true);
+            }
+          },
+          disabled: saving,
+        }, editMode[0] ? (saving ? "Saving…" : "Save") : "Edit content"),
+        readOnly && h("p", { className: "text-xs text-muted-foreground mb-3" }, "Read-only (bundled skill)"),
+        editMode[0]
+          ? h("textarea", {
+              className: "w-full bg-transparent border border-input rounded p-2 text-xs font-mono min-h-[60vh] resize-y",
+              value: editContentSt[0],
+              onChange: function (e) { setEditContent(e.target.value); },
+              style: { fontFamily: "inherit" },
+            })
+          : h("pre", {
+              className: "text-xs bg-muted/50 rounded p-4 overflow-auto max-h-[60vh] whitespace-pre-wrap font-mono",
+              style: { fontFamily: "inherit" },
+            }, skill.content || ""),
+      ),
+
+      // Patch tab
+      tab === "patch" && h("div", { className: "pt-4" },
+        readOnly
+          ? h("p", { className: "text-xs text-muted-foreground" }, "Read-only skill.")
+          : h("div", { className: "flex flex-col gap-3" },
+              h("div", null,
+                h(Label, { className: "text-xs mb-1 block" }, "Find this text:"),
+                h("textarea", {
+                  className: "w-full bg-muted border border-input rounded p-2 text-xs font-mono min-h-[80px] resize-y",
+                  value: patchOldSt[0],
+                  onChange: function (e) { setPatchOld(e.target.value); },
+                  placeholder: "Paste the exact text to find…",
+                  style: { fontFamily: "inherit" },
+                }),
+              ),
+              h("div", null,
+                h(Label, { className: "text-xs mb-1 block" }, "Replace with:"),
+                h("textarea", {
+                  className: "w-full bg-muted border border-input rounded p-2 text-xs font-mono min-h-[80px] resize-y",
+                  value: patchNewSt[0],
+                  onChange: function (e) { setPatchNew(e.target.value); },
+                  placeholder: "New text (leave empty to delete matched text)",
+                  style: { fontFamily: "inherit" },
+                }),
+              ),
+              h(Button, {
+                size: "sm",
+                onClick: function () {
+                  if (!patchOldSt[0]) return;
+                  setSaving(true);
+                  setSaveMsg(null);
+                  apiMutate(name, "patch", { old_string: patchOldSt[0], new_string: patchNewSt[0] })
+                    .then(function () {
+                      setSaveMsg({ ok: true, msg: "Patch applied." });
+                      setPatchOld("");
+                      setPatchNew("");
+                      return apiGetSkill(name);
+                    })
+                    .then(function (s) { setSkill(s); setEditContent(s.content || ""); setSaving(false); })
+                    .catch(function (e) { setSaveMsg({ ok: false, msg: String(e) }); setSaving(false); });
+                },
+                disabled: saving || !patchOldSt[0],
+              }, saving ? "Patching…" : "Apply patch"),
+            ),
+      ),
+
+      // Files tab
+      tab === "files" && h("div", { className: "pt-4 flex gap-4", style: { minHeight: "500px" } },
+        // Column 1: file list
+        h("div", { className: "w-56 shrink-0" },
+          h("div", { className: "bg-muted/30 rounded p-3" },
+            h("p", { className: "text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide" }, "Files"),
+            h("ul", { className: "text-xs space-y-0.5" },
+              skill.files.map(function (f) {
+                var active = selectedFileSt[0] === f.path;
+                return h("li", {
+                  key: f.path,
+                  className: cn(
+                    "cursor-pointer px-2 py-1.5 rounded truncate transition-colors",
+                    active ? "bg-primary/20 text-primary font-medium" : "hover:bg-muted"
+                  ),
+                  onClick: function () {
+                    setSelectedFile(f.path);
+                    setFileEditMode(false);
+                    setFileMsg(null);
+                    setFileContent("");
+                  },
+                  title: f.path,
+                }, f.path);
+              }),
+            ),
+          ),
+        ),
+
+        // Column 2: content viewer/editor
+        h("div", { className: "flex-1 min-w-0 flex flex-col" },
+          !selectedFileSt[0]
+            ? h("div", { className: "flex-1 flex items-center justify-center text-muted-foreground text-sm" },
+                "Click a file to view its content"
+              )
+            : h("div", { className: "flex-1 flex flex-col" },
+                // Header row
+                h("div", { className: "flex items-center gap-2 mb-2" },
+                  h("span", { className: "text-xs font-mono text-muted-foreground flex-1 truncate" }, selectedFileSt[0]),
+                  !readOnly && h(Button, {
+                    size: "xs",
+                    variant: fileEditMode[0] ? "default" : "outline",
+                    onClick: function () {
+                      if (fileEditMode[0]) {
+                        // Save — write file to disk
+                        setFileSaving(true);
+                        setFileMsg(null);
+                        apiWriteFile(name, selectedFileSt[0], fileContentSt[0])
+                          .then(function () {
+                            setFileMsg({ ok: true, msg: "File saved." });
+                            setFileEditMode(false);
+                            setFileSaving(false);
+                          })
+                          .catch(function (e) {
+                            setFileMsg({ ok: false, msg: String(e) });
+                            setFileSaving(false);
+                          });
+                      } else {
+                        // Enter edit mode — load file content first
+                        var path = selectedFileSt[0];
+                        setFileSaving(true);
+                        apiReadFile(name, path)
+                          .then(function (data) {
+                            setFileContent(data.content || "");
+                            setFileEditMode(true);
+                            setFileSaving(false);
+                          })
+                          .catch(function (e) {
+                            setFileMsg({ ok: false, msg: String(e) });
+                            setFileSaving(false);
+                          });
+                      }
+                    },
+                    disabled: fileSaving,
+                  }, fileEditMode[0] ? (fileSaving ? "Saving…" : "Save") : "Edit"),
+                ),
+
+                // Feedback message
+                fileMsg && h("div", {
+                  className: "text-xs px-2 py-1 rounded mb-2 " + (fileMsg.ok
+                    ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400"
+                    : "bg-destructive/10 border border-destructive/30 text-destructive"
+                  )},
+                  fileMsg.msg,
+                ),
+
+                // Read-only preview (when not editing)
+                !fileEditMode[0] && h("pre", {
+                  className: "flex-1 text-xs bg-muted/50 rounded p-4 overflow-auto whitespace-pre-wrap font-mono",
+                  style: { fontFamily: "inherit", minHeight: "300px" },
+                }, fileContentSt[0] || "(empty)"),
+
+                // Editable textarea (when in edit mode)
+                fileEditMode[0] && h("textarea", {
+                  className: "flex-1 w-full bg-transparent border border-input rounded p-3 text-xs font-mono resize-y",
+                  value: fileContentSt[0],
+                  onChange: function (e) { setFileContent(e.target.value); },
+                  style: { fontFamily: "inherit", minHeight: "300px" },
+                }),
+              ),
+        ),
+      ),
+
+      // Info tab
+      tab === "info" && h("div", { className: "pt-4" },
+        h("dl", { className: "grid grid-cols-2 gap-4 text-xs" },
+          h("div", null, h("dt", { className: "text-muted-foreground mb-1" }, "Name"), h("dd", { className: "font-medium" }, skill.name)),
+          h("div", null, h("dt", { className: "text-muted-foreground mb-1" }, "Category"), h("dd", { className: "font-medium" }, skill.category || "—")),
+          h("div", null, h("dt", { className: "text-muted-foreground mb-1" }, "Source"), h("dd", null, sourceBadge(skill.source))),
+          h("div", null, h("dt", { className: "text-muted-foreground mb-1" }, "Tags"), h("dd", null, (skill.tags || []).join(", ") || "—" )),
+          h("div", null, h("dt", { className: "text-muted-foreground mb-1" }, "Skill path"), h("dd", { className: "font-mono text-muted-foreground break-all" }, skill.skill_dir || "—" )),
+        ),
+      ),
     );
   }
 

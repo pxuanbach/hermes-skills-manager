@@ -113,7 +113,7 @@ def _parse_skill_meta(skill_path: Path) -> dict[str, Any]:
     except Exception:
         return {}
     # Extract YAML frontmatter
-    m = re.match(r"^---\n(.*?)\1\n---\n", text, re.DOTALL)
+    m = re.match(r"^---\n(.*?)\n---\n", text, re.DOTALL)
     if not m:
         return {"name": skill_path.parent.name, "description": ""}
     try:
@@ -135,7 +135,7 @@ def _parse_skill_meta(skill_path: Path) -> dict[str, Any]:
         "tags": tags,
         "skill_dir": str(skill_path.parent),
         "skill_path": str(skill_path),
-        "pinned": False,
+        "pinned": False,  # Pinned state lives in .usage.json; skip for now
         "is_user_skill": _is_user_skill(skill_path),
         "is_bundled": _is_bundled(skill_path),
     }
@@ -153,17 +153,7 @@ def _list_skill_files(skill_dir: Path) -> list[dict[str, str]]:
             full = Path(root) / f
             rel = str(full.relative_to(skill_dir))
             files.append({"path": rel, "type": "file"})
-    files.sort(key=lambda f: f["path"])
     return files
-
-
-def _find_skill_dir(name: str) -> tuple[Path, Path] | None:
-    """Find (skill_dir, skills_dir) for a named skill. Returns None if not found."""
-    for skills_dir in get_all_skills_dirs():
-        for skill_file in iter_skill_index_files(skills_dir, "SKILL.md"):
-            if skill_file.parent.name == name:
-                return skill_file.parent, skills_dir
-    return None
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -203,44 +193,25 @@ async def get_skill(name: str) -> dict[str, Any]:
 
     Searches all skills dirs; returns first match (user > bundled > external).
     """
-    found = _find_skill_dir(name)
-    if not found:
-        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
-    skill_dir, _ = found
-    meta = _parse_skill_meta(skill_dir / "SKILL.md")
-    try:
-        meta["content"] = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
-    except Exception:
-        meta["content"] = ""
-    meta["files"] = _list_skill_files(skill_dir)
-    meta["source"] = (
-        "user"
-        if _is_user_skill(skill_dir)
-        else "bundled"
-        if _is_bundled(skill_dir)
-        else "external"
-    )
-    return meta
-
-
-@router.get("/skills/{name}/files/{path:path}")
-async def read_skill_file(name: str, path: str) -> dict[str, Any]:
-    """Read the content of any file within a skill directory."""
-    found = _find_skill_dir(name)
-    if not found:
-        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
-    skill_dir, _ = found
-    safe_path = skill_dir / path
-    # Prevent path traversal — resolved path must be under skill_dir
-    if not safe_path.resolve().is_relative_to(skill_dir.resolve()):
-        raise HTTPException(status_code=400, detail="Invalid path: traversal not allowed")
-    if not safe_path.is_file():
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
-    try:
-        content = safe_path.read_text(encoding="utf-8")
-    except Exception:
-        content = ""
-    return {"path": path, "content": content}
+    for skills_dir in get_all_skills_dirs():
+        for skill_file in iter_skill_index_files(skills_dir, "SKILL.md"):
+            if skill_file.parent.name == name:
+                skill_dir = skill_file.parent
+                meta = _parse_skill_meta(skill_file)
+                try:
+                    meta["content"] = skill_file.read_text(encoding="utf-8")
+                except Exception:
+                    meta["content"] = ""
+                meta["files"] = _list_skill_files(skill_dir)
+                meta["source"] = (
+                    "user"
+                    if _is_user_skill(skill_dir)
+                    else "bundled"
+                    if _is_bundled(skill_dir)
+                    else "external"
+                )
+                return meta
+    raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
 
 @router.patch("/skills/{name}")
@@ -254,86 +225,102 @@ async def patch_skill(name: str, body: dict[str, Any]) -> dict[str, Any]:
       - content: full SKILL.md text (for edit)
       - file_path: path within skill dir (optional; defaults to SKILL.md)
     """
-    found = _find_skill_dir(name)
-    if not found:
-        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
-    skill_dir, _ = found
-    if not _is_user_skill(skill_dir):
-        raise HTTPException(
-            status_code=403,
-            detail="Only user skills (~/.hermes/skills/) can be edited. "
-                   "Bundled and external skills are read-only.",
-        )
-    action = body.get("action", "patch")
-    file_path = body.get("file_path") or None
-    result = skill_manage(
-        action=action,
-        name=name,
-        content=body.get("content"),
-        old_string=body.get("old_string"),
-        new_string=body.get("new_string"),
-        file_path=file_path,
-        file_content=body.get("file_content"),
-        replace_all=body.get("replace_all", False),
-        absorbed_into=body.get("absorbed_into"),
-    )
-    parsed = json.loads(result)
-    if not parsed.get("success"):
-        raise HTTPException(status_code=400, detail=parsed.get("error", "Mutation failed"))
-    return parsed
+    for skills_dir in get_all_skills_dirs():
+        for skill_file in iter_skill_index_files(skills_dir, "SKILL.md"):
+            if skill_file.parent.name == name:
+                skill_dir = skill_file.parent
+                if not _is_user_skill(skill_dir):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Only user skills (~/.hermes/skills/) can be edited. "
+                               "Bundled and external skills are read-only.",
+                    )
+                action = body.get("action", "patch")
+                file_path = body.get("file_path") or None
+                result = skill_manage(
+                    action=action,
+                    name=name,
+                    content=body.get("content"),
+                    old_string=body.get("old_string"),
+                    new_string=body.get("new_string"),
+                    file_path=file_path,
+                    file_content=body.get("file_content"),
+                    replace_all=body.get("replace_all", False),
+                    absorbed_into=body.get("absorbed_into"),
+                )
+                parsed = json.loads(result)
+                if not parsed.get("success"):
+                    raise HTTPException(status_code=400, detail=parsed.get("error", "Mutation failed"))
+                return parsed
+    raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
+
+
+@router.get("/skills/{name}/files/{path:path}")
+async def read_skill_file(name: str, path: str) -> dict[str, Any]:
+    """Read the content of a file inside a skill directory."""
+    for skills_dir in get_all_skills_dirs():
+        for skill_file in iter_skill_index_files(skills_dir, "SKILL.md"):
+            if skill_file.parent.name == name:
+                skill_dir = skill_file.parent
+                file_path = skill_dir / path
+                if not file_path.exists():
+                    raise HTTPException(status_code=404, detail=f"File not found: {path}")
+                try:
+                    content = file_path.read_text()
+                    return {"content": content}
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+    raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
 
 @router.post("/skills/{name}/files/{path:path}")
 async def write_skill_file(name: str, path: str, body: dict[str, str]) -> dict[str, Any]:
     """Create or overwrite a file inside a skill directory.
 
-    Accepts any file path under the skill directory.
+    file_path must be under references/, templates/, scripts/, or assets/.
     """
-    found = _find_skill_dir(name)
-    if not found:
-        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
-    skill_dir, _ = found
-    if not _is_user_skill(skill_dir):
-        raise HTTPException(
-            status_code=403,
-            detail="Only user skills can be modified.",
-        )
-    safe_path = skill_dir / path
-    if not safe_path.resolve().is_relative_to(skill_dir.resolve()):
-        raise HTTPException(status_code=400, detail="Invalid path: traversal not allowed")
-    result = skill_manage(
-        action="write_file",
-        name=name,
-        file_path=path,
-        file_content=body.get("content", ""),
-    )
-    parsed = json.loads(result)
-    if not parsed.get("success"):
-        raise HTTPException(status_code=400, detail=parsed.get("error", "Write failed"))
-    return parsed
+    for skills_dir in get_all_skills_dirs():
+        for skill_file in iter_skill_index_files(skills_dir, "SKILL.md"):
+            if skill_file.parent.name == name:
+                skill_dir = skill_file.parent
+                if not _is_user_skill(skill_dir):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Only user skills can be modified.",
+                    )
+                actual_path = (skill_dir / path).resolve()
+                if not str(actual_path).startswith(str(skill_dir.resolve())):
+                    raise HTTPException(status_code=400, detail="Path traversal not allowed")
+                try:
+                    actual_path.write_text(body.get("content", ""))
+                    return {"success": True, "path": path}
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+    raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
 
 @router.delete("/skills/{name}/files/{path:path}")
 async def remove_skill_file(name: str, path: str) -> dict[str, Any]:
     """Delete a file from a skill directory."""
-    found = _find_skill_dir(name)
-    if not found:
-        raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
-    skill_dir, _ = found
-    if not _is_user_skill(skill_dir):
-        raise HTTPException(
-            status_code=403,
-            detail="Only user skills can be modified.",
-        )
-    result = skill_manage(
-        action="remove_file",
-        name=name,
-        file_path=path,
-    )
-    parsed = json.loads(result)
-    if not parsed.get("success"):
-        raise HTTPException(status_code=400, detail=parsed.get("error", "Delete failed"))
-    return parsed
+    for skills_dir in get_all_skills_dirs():
+        for skill_file in iter_skill_index_files(skills_dir, "SKILL.md"):
+            if skill_file.parent.name == name:
+                skill_dir = skill_file.parent
+                if not _is_user_skill(skill_dir):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Only user skills can be modified.",
+                    )
+                result = skill_manage(
+                    action="remove_file",
+                    name=name,
+                    file_path=path,
+                )
+                parsed = json.loads(result)
+                if not parsed.get("success"):
+                    raise HTTPException(status_code=400, detail=parsed.get("error", "Delete failed"))
+                return parsed
+    raise HTTPException(status_code=404, detail=f"Skill '{name}' not found")
 
 
 @router.get("/skills/{name}/usage")
